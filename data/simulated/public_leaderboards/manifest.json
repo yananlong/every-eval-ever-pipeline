@@ -1,0 +1,20 @@
+{
+  "generated_at": "2026-02-22T14:53:34.253342+00:00",
+  "target_rows_requested": 200,
+  "target_rows_written": 200,
+  "seed": 42,
+  "sources": {
+    "global_mmlu_lite": {
+      "rows_fetched": 24
+    },
+    "rewardbench_v1": {
+      "rows_fetched": 187
+    }
+  },
+  "counts_by_source_in_output": {
+    "global_mmlu_lite": 23,
+    "rewardbench_v1": 177
+  },
+  "output_file": "data/simulated/public_leaderboards/aggregate_rows_200.jsonl",
+  "notes": "Rows are scraped from public leaderboards and normalized to eval-style aggregate records."
+}
