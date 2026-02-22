@@ -1,20 +1,70 @@
 {
-  "generated_at": "2026-02-22T14:53:34.253342+00:00",
+  "generated_at": "2026-02-22T16:03:44.448707+00:00",
   "target_rows_requested": 200,
   "target_rows_written": 200,
   "seed": 42,
+  "min_per_source": 10,
+  "sources_attempted": 11,
+  "sources_available_with_rows": 11,
   "sources": {
     "global_mmlu_lite": {
+      "status": "ok",
       "rows_fetched": 24
     },
     "rewardbench_v1": {
+      "status": "ok",
       "rows_fetched": 187
+    },
+    "lmarena_latest": {
+      "status": "ok",
+      "rows_fetched": 113
+    },
+    "lmarena_hard_auto": {
+      "status": "ok",
+      "rows_fetched": 60
+    },
+    "tabarena_all": {
+      "status": "ok",
+      "rows_fetched": 51
+    },
+    "tabarena_binary": {
+      "status": "ok",
+      "rows_fetched": 53
+    },
+    "ugi_leaderboard": {
+      "status": "ok",
+      "rows_fetched": 1030
+    },
+    "ivrit_asr_leaderboard": {
+      "status": "ok",
+      "rows_fetched": 17
+    },
+    "open_pt_llm_leaderboard": {
+      "status": "ok",
+      "rows_fetched": 42
+    },
+    "open_llm_leaderboard_contents": {
+      "status": "ok",
+      "rows_fetched": 250
+    },
+    "bigcode_models_leaderboard": {
+      "status": "ok",
+      "rows_fetched": 25
     }
   },
   "counts_by_source_in_output": {
-    "global_mmlu_lite": 23,
-    "rewardbench_v1": 177
+    "global_mmlu_lite": 13,
+    "rewardbench_v1": 18,
+    "lmarena_latest": 12,
+    "lmarena_hard_auto": 14,
+    "tabarena_all": 20,
+    "tabarena_binary": 12,
+    "ugi_leaderboard": 61,
+    "ivrit_asr_leaderboard": 11,
+    "open_pt_llm_leaderboard": 12,
+    "open_llm_leaderboard_contents": 17,
+    "bigcode_models_leaderboard": 10
   },
   "output_file": "data/simulated/public_leaderboards/aggregate_rows_200.jsonl",
-  "notes": "Rows are scraped from public leaderboards and normalized to eval-style aggregate records."
+  "notes": "Rows are scraped from multiple public leaderboard sources and normalized to eval-style aggregate records."
 }
