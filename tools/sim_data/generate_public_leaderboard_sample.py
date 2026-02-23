@@ -192,6 +192,8 @@ def make_metric(
     score: float,
     lower_is_better: bool,
 ) -> dict[str, Any]:
+    min_score = min(0.0, float(score))
+    max_score = max(1.0, float(score))
     return {
         "evaluation_name": clean_evaluation_name(evaluation_name),
         "source_data": {
@@ -203,6 +205,8 @@ def make_metric(
             "evaluation_description": f"{source_dataset_name} - {clean_evaluation_name(evaluation_name)}",
             "lower_is_better": lower_is_better,
             "score_type": "continuous",
+            "min_score": round(min_score, 6),
+            "max_score": round(max_score, 6),
         },
         "score_details": {"score": round(score, 6)},
     }
@@ -245,8 +249,6 @@ def make_aggregate_record(
         "eval_library": {"name": "unknown", "version": "unknown"},
         "model_info": model_info,
         "evaluation_results": eval_results,
-        "_sim_source": source_key,
-        "_sim_source_url": source_url,
     }
 
 
@@ -945,7 +947,8 @@ def main() -> None:
 
     counts_by_source: dict[str, int] = {}
     for row in sampled:
-        source_name = str(row.get("_sim_source", "unknown"))
+        evaluation_id = str(row.get("evaluation_id", ""))
+        source_name = evaluation_id.split("/", 1)[0] if "/" in evaluation_id else "unknown"
         counts_by_source[source_name] = counts_by_source.get(source_name, 0) + 1
 
     manifest = {
