@@ -1,6 +1,9 @@
 # Environment variables (never commit)
 .env
 
+# DuckDB databases
+*.duckdb
+
 # Python
 __pycache__/
 *.py[cod]
