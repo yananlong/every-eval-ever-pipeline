@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import io
 import json
 import random
@@ -185,13 +186,292 @@ def clean_evaluation_name(metric_name: str) -> str:
     return re.sub(r"\s+", " ", metric_name.strip())
 
 
+def infer_metric_unit(metric_name: str, score: float, lower_is_better: bool) -> str:
+    lowered = metric_name.lower()
+    lowered_norm = lowered.replace("₂", "2")
+    if "kg" in lowered_norm or "co2" in lowered_norm:
+        return "kg"
+    if "rank" in lowered_norm:
+        return "rank"
+    if "char" in lowered_norm:
+        return "characters"
+    if "count" in lowered_norm:
+        return "count"
+    if "ms" in lowered or "millisecond" in lowered:
+        return "ms"
+    if "sec" in lowered or "latency" in lowered or "time" in lowered:
+        return "seconds"
+    if "token" in lowered:
+        return "tokens"
+    if "elo" in lowered:
+        return "points"
+    if lower_is_better and any(x in lowered for x in ["rmse", "mae", "mse", "error", "loss"]):
+        return "points"
+
+    abs_score = abs(float(score))
+    if abs_score <= 1.0:
+        return "proportion"
+    if abs_score <= 100.0:
+        return "percent"
+    return "points"
+
+
+def infer_metric_identity(
+    *,
+    source_key: str,
+    evaluation_name: str,
+    metric_label: str | None,
+    score: float,
+    lower_is_better: bool,
+) -> dict[str, Any]:
+    raw_name = clean_evaluation_name(metric_label or evaluation_name)
+    lowered = raw_name.lower()
+    compact = re.sub(r"\s+", "", lowered)
+
+    metric_id = sanitize_component(raw_name).replace("-", "_")
+    metric_name = raw_name
+    metric_kind = "leaderboard_score"
+    metric_parameters: dict[str, Any] = {}
+    metric_unit = infer_metric_unit(raw_name, score, lower_is_better)
+    lowered_norm = lowered.replace("₂", "2")
+
+    pass_match = (
+        re.search(r"pass\s*[@_ ]\s*(\d+)", lowered)
+        or re.search(r"passat(\d+)", compact)
+        or re.search(r"pass_at_(\d+)", compact)
+    )
+    if pass_match:
+        k = int(pass_match.group(1))
+        metric_id = "pass_at_k"
+        metric_name = f"pass@{k}"
+        metric_kind = "pass_rate"
+        metric_parameters = {"k": k}
+        metric_unit = "proportion" if abs(float(score)) <= 1.0 else "percent"
+        return {
+            "metric_id": metric_id,
+            "metric_name": metric_name,
+            "metric_kind": metric_kind,
+            "metric_unit": metric_unit,
+            "metric_parameters": metric_parameters,
+        }
+
+    if source_key in {"lmarena_hard_auto", "lmarena_latest"} and lowered in {"score", "arena score"}:
+        metric_id = "arena_elo"
+        metric_kind = "elo"
+        metric_unit = "points"
+        return {
+            "metric_id": metric_id,
+            "metric_name": metric_name,
+            "metric_kind": metric_kind,
+            "metric_unit": metric_unit,
+            "metric_parameters": metric_parameters,
+        }
+
+    if source_key == "rewardbench_v1":
+        metric_kind = "preference_rate"
+        metric_unit = "proportion" if abs(float(score)) <= 1.0 else "percent"
+        if lowered == "score":
+            metric_id = "rewardbench_overall"
+        else:
+            metric_id = f"rewardbench_{sanitize_component(raw_name).replace('-', '_')}"
+        return {
+            "metric_id": metric_id,
+            "metric_name": metric_name,
+            "metric_kind": metric_kind,
+            "metric_unit": metric_unit,
+            "metric_parameters": metric_parameters,
+        }
+
+    if "elo" in lowered_norm:
+        metric_id = "elo"
+        metric_kind = "elo"
+        metric_unit = "points"
+    elif "rank" in lowered_norm:
+        metric_id = "rank"
+        metric_kind = "rank"
+        metric_unit = "rank"
+    elif "time" in lowered_norm or "latency" in lowered_norm:
+        metric_id = "latency"
+        metric_kind = "latency"
+        metric_unit = "seconds"
+    elif "co2" in lowered_norm or "carbon" in lowered_norm or "emission" in lowered_norm:
+        metric_id = "emissions"
+        metric_kind = "emissions"
+        metric_unit = "kg"
+    elif any(x in lowered_norm for x in ["error", "improvability", "imputed", "percent_error", "error_pct"]):
+        metric_id = "error_rate" if any(x in lowered_norm for x in ["%", "percent", "pct", "rate"]) else "error"
+        metric_kind = "error_rate" if "rate" in metric_id else "error"
+        metric_unit = "percent" if any(x in lowered_norm for x in ["%", "percent", "pct"]) else "points"
+    elif any(
+        x in lowered_norm
+        for x in [
+            "sensitive info",
+            "hazard",
+            "safety",
+            "offensive",
+            "hate",
+            "nsfw",
+            "dark_score",
+        ]
+    ):
+        metric_id = "safety_risk"
+        metric_kind = "safety_risk"
+        metric_unit = "proportion" if abs(float(score)) <= 1.0 else "percent"
+    elif any(
+        x in lowered_norm
+        for x in [
+            "political lean",
+            "federal-unitary",
+            "democratic-autocratic",
+            "security-freedom",
+            "nationalism-internationalism",
+            "militarist-pacifist",
+            "assimilationist-multiculturalist",
+            "collectivize-privatize",
+            "planned-laissezfaire",
+            "isolationism-globalism",
+            "irreligious-religious",
+            "progressive-traditional",
+            "acceleration-bioconservative",
+        ]
+    ):
+        metric_id = "ideology_axis"
+        metric_kind = "ideology_axis"
+        metric_unit = "points"
+    elif any(
+        x in lowered_norm
+        for x in [
+            "writing",
+            "dialogue_percentage",
+            "verb_to_noun_ratio",
+            "adjective_adverb_percentage",
+            "readability",
+            "originality",
+            "semantic",
+            "lexical",
+            "rec score",
+            "show rec",
+            "dipl",
+            "govt",
+            "econ",
+            "scty",
+        ]
+    ):
+        metric_id = "quality_score"
+        metric_kind = "quality_score"
+        metric_unit = "points"
+    elif any(
+        x in lowered_norm
+        for x in [
+            "ifeval",
+            "bbh",
+            "math",
+            "gpqa",
+            "musr",
+            "mmlu",
+            "challenge",
+            "exams",
+            "rte",
+            "nli",
+            "tweetsent",
+            "offensive",
+            "hate_speech",
+            "sts",
+        ]
+    ):
+        metric_id = "accuracy"
+        metric_kind = "accuracy"
+        metric_unit = "proportion" if abs(float(score)) <= 1.0 else "percent"
+    elif any(x in lowered for x in ["accuracy", " acc", "acc ", "mmlu"]):
+        metric_id = "accuracy"
+        metric_kind = "accuracy"
+        metric_unit = "proportion" if abs(float(score)) <= 1.0 else "percent"
+    elif "f1" in lowered:
+        metric_kind = "f1"
+        if "macro" in lowered:
+            metric_id = "f1_macro"
+        elif "micro" in lowered:
+            metric_id = "f1_micro"
+        elif "weighted" in lowered:
+            metric_id = "f1_weighted"
+        else:
+            metric_id = "f1"
+        metric_unit = "proportion" if abs(float(score)) <= 1.0 else "percent"
+    elif "auroc" in lowered or "roc-auc" in lowered or "roc_auc" in lowered or "auc" == compact:
+        metric_id = "auroc"
+        metric_kind = "auroc"
+        metric_unit = "proportion" if abs(float(score)) <= 1.0 else "percent"
+    elif "rmse" in lowered:
+        metric_id = "rmse"
+        metric_kind = "rmse"
+        metric_unit = "points"
+    elif "mae" in lowered:
+        metric_id = "mae"
+        metric_kind = "mae"
+        metric_unit = "points"
+    elif "mse" in lowered:
+        metric_id = "mse"
+        metric_kind = "mse"
+        metric_unit = "points"
+    elif "wer" in lowered:
+        metric_id = "word_error_rate"
+        metric_kind = "word_error_rate"
+        metric_unit = "proportion" if abs(float(score)) <= 1.0 else "percent"
+    elif "mt-bench" in lowered:
+        metric_id = "mt_bench_score"
+        metric_kind = "quality_score"
+        metric_unit = "points"
+
+    return {
+        "metric_id": metric_id,
+        "metric_name": metric_name,
+        "metric_kind": metric_kind,
+        "metric_unit": metric_unit,
+        "metric_parameters": metric_parameters,
+    }
+
+
+def build_evaluation_result_id(
+    *,
+    source_name: str,
+    model_id: str,
+    result: dict[str, Any],
+) -> str:
+    metric_config = result.get("metric_config", {})
+    source_data = result.get("source_data", {})
+    canonical_payload = {
+        "source_name": source_name,
+        "model_id": model_id,
+        "dataset_name": source_data.get("dataset_name"),
+        "evaluation_name": result.get("evaluation_name"),
+        "metric_id": metric_config.get("metric_id"),
+        "metric_name": metric_config.get("metric_name"),
+        "metric_kind": metric_config.get("metric_kind"),
+        "metric_unit": metric_config.get("metric_unit"),
+        "metric_parameters": metric_config.get("metric_parameters", {}),
+    }
+    canonical_text = json.dumps(canonical_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    digest = hashlib.sha256(canonical_text.encode("utf-8")).hexdigest()
+    return f"er_{digest}"
+
+
 def make_metric(
+    *,
+    source_key: str,
     evaluation_name: str,
     source_dataset_name: str,
     source_url: str,
     score: float,
     lower_is_better: bool,
+    metric_label: str | None = None,
 ) -> dict[str, Any]:
+    metric_identity = infer_metric_identity(
+        source_key=source_key,
+        evaluation_name=evaluation_name,
+        metric_label=metric_label,
+        score=score,
+        lower_is_better=lower_is_better,
+    )
     min_score = min(0.0, float(score))
     max_score = max(1.0, float(score))
     return {
@@ -207,6 +487,11 @@ def make_metric(
             "score_type": "continuous",
             "min_score": round(min_score, 6),
             "max_score": round(max_score, 6),
+            "metric_id": metric_identity["metric_id"],
+            "metric_name": metric_identity["metric_name"],
+            "metric_kind": metric_identity["metric_kind"],
+            "metric_unit": metric_identity["metric_unit"],
+            "metric_parameters": metric_identity["metric_parameters"],
         },
         "score_details": {"score": round(score, 6)},
     }
@@ -235,7 +520,7 @@ def make_aggregate_record(
     if additional_model_details:
         model_info["additional_details"] = additional_model_details
 
-    return {
+    record = {
         "schema_version": "0.2.1",
         "evaluation_id": f"{source_key}/{sanitize_component(model_id)}/{now_ts}-{row_idx}",
         "retrieved_timestamp": now_ts,
@@ -250,6 +535,14 @@ def make_aggregate_record(
         "model_info": model_info,
         "evaluation_results": eval_results,
     }
+    for result in record["evaluation_results"]:
+        if "evaluation_result_id" not in result:
+            result["evaluation_result_id"] = build_evaluation_result_id(
+                source_name=source_name,
+                model_id=model_id,
+                result=result,
+            )
+    return record
 
 
 def should_skip_metric_column(column_name: str) -> bool:
@@ -366,6 +659,7 @@ def convert_csv_source(
 
             eval_results.append(
                 make_metric(
+                    source_key=source_key,
                     evaluation_name=key,
                     source_dataset_name=source_name,
                     source_url=source_url,
@@ -421,11 +715,13 @@ def convert_global_mmlu() -> list[dict[str, Any]]:
 
             confidence_interval = parse_float(numeric_result.get("confidenceInterval"))
             metric = make_metric(
+                source_key="global_mmlu_lite",
                 evaluation_name=task_name,
                 source_dataset_name="global-mmlu-lite",
                 source_url="https://www.kaggle.com/datasets/cohere-labs/global-mmlu-lite",
                 score=score,
                 lower_is_better=False,
+                metric_label="accuracy",
             )
             if confidence_interval is not None and confidence_interval > 0:
                 metric["score_details"]["uncertainty"] = {
@@ -501,6 +797,7 @@ def convert_rewardbench_v1() -> list[dict[str, Any]]:
                 continue
 
             metric = make_metric(
+                source_key="rewardbench_v1",
                 evaluation_name=metric_name,
                 source_dataset_name="RewardBench",
                 source_url="https://huggingface.co/spaces/allenai/reward-bench",
@@ -557,6 +854,7 @@ def convert_open_pt_llm() -> list[dict[str, Any]]:
                 continue
             eval_results.append(
                 make_metric(
+                    source_key="open_pt_llm_leaderboard",
                     evaluation_name=metric_name,
                     source_dataset_name="Open PT LLM Leaderboard",
                     source_url="https://huggingface.co/spaces/eduagarcia/open_pt_llm_leaderboard",
@@ -571,6 +869,7 @@ def convert_open_pt_llm() -> list[dict[str, Any]]:
                 continue
             eval_results.append(
                 make_metric(
+                    source_key="open_pt_llm_leaderboard",
                     evaluation_name=metric_name,
                     source_dataset_name="Open PT LLM Leaderboard",
                     source_url="https://huggingface.co/spaces/eduagarcia/open_pt_llm_leaderboard",
@@ -647,6 +946,7 @@ def convert_open_llm_contents() -> list[dict[str, Any]]:
                 continue
             eval_results.append(
                 make_metric(
+                    source_key="open_llm_leaderboard_contents",
                     evaluation_name=str(key),
                     source_dataset_name="Open LLM Leaderboard Contents",
                     source_url="https://huggingface.co/datasets/open-llm-leaderboard/contents",
@@ -729,11 +1029,13 @@ def convert_bigcode_community() -> list[dict[str, Any]]:
             if not isinstance(task_name, str) or score is None:
                 continue
             metric = make_metric(
+                source_key="bigcode_models_leaderboard",
                 evaluation_name=task_name,
                 source_dataset_name="BigCode Models Leaderboard",
                 source_url="https://huggingface.co/spaces/bigcode/bigcode-models-leaderboard",
                 score=score,
                 lower_is_better=False,
+                metric_label="pass@1",
             )
             metric["metric_config"]["min_score"] = 0.0
             metric["metric_config"]["max_score"] = 1.0

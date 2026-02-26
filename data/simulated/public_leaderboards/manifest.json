@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-02-23T07:23:37.416405+00:00",
+  "generated_at": "2026-02-26T17:52:20.111340+00:00",
   "target_rows_requested": 200,
   "target_rows_written": 200,
   "seed": 42,
@@ -33,7 +33,7 @@
     },
     "ugi_leaderboard": {
       "status": "ok",
-      "rows_fetched": 1028
+      "rows_fetched": 1047
     },
     "ivrit_asr_leaderboard": {
       "status": "ok",
@@ -53,16 +53,16 @@
     }
   },
   "counts_by_source_in_output": {
-    "global_mmlu_lite": 13,
+    "global_mmlu_lite": 12,
     "rewardbench_v1": 20,
-    "lmarena_latest": 15,
-    "lmarena_hard_auto": 13,
-    "tabarena_all": 13,
-    "tabarena_binary": 13,
-    "ugi_leaderboard": 59,
-    "ivrit_asr_leaderboard": 10,
-    "open_pt_llm_leaderboard": 11,
-    "open_llm_leaderboard_contents": 23,
+    "lmarena_latest": 14,
+    "lmarena_hard_auto": 12,
+    "tabarena_all": 14,
+    "tabarena_binary": 14,
+    "ugi_leaderboard": 62,
+    "ivrit_asr_leaderboard": 11,
+    "open_pt_llm_leaderboard": 14,
+    "open_llm_leaderboard_contents": 17,
     "bigcode_models_leaderboard": 10
   },
   "output_file": "data/simulated/public_leaderboards/aggregate_rows_200.jsonl",
