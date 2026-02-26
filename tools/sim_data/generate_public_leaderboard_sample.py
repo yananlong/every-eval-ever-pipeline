@@ -625,7 +625,7 @@ def fetch_open_llm_contents_rows(max_rows: int = 250, page_size: int = 100) -> l
 
         if added == 0:
             break
-        offset += added
+        offset += len(chunk)
 
     return rows
 
