@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     duckdb_path: str = "data/backend.duckdb"
     default_aggregate_jsonl_path: str = "data/simulated/public_leaderboards/aggregate_rows_200.jsonl"
     default_instance_jsonl_path: str = "data/simulated/public_leaderboards/instance_rows_200.jsonl"
+    ingestion_base_dir: str = "data"
 
     # Database
     database_url: str = "postgresql://postgres:password@localhost:5432/every_eval_ever"
