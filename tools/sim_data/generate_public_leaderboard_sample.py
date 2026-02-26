@@ -458,11 +458,18 @@ def convert_global_mmlu() -> list[dict[str, Any]]:
 
 
 def parse_rewardbench_score(raw: Any) -> float | None:
+    """Parse a RewardBench score, normalizing percentage-like values to [0, 1]."""
     value = parse_numeric(raw)
     if value is None:
         return None
-    # RewardBench CSV values are frequently 0-100.
-    return round(value / 100.0, 6) if value > 1 else round(value, 6)
+    # RewardBench CSV values are typically reported as percentages in [0, 100].
+    # Heuristic:
+    # - If value <= 1, assume it is already normalized to [0, 1].
+    # - If 1 < value <= 100, treat it as a percentage and divide by 100.
+    # - If value > 100, return it as-is rather than implicitly normalizing.
+    if 1 < value <= 100:
+        return round(value / 100.0, 6)
+    return round(value, 6)
 
 
 def convert_rewardbench_v1() -> list[dict[str, Any]]:
