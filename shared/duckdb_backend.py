@@ -446,18 +446,23 @@ class DuckDBBackend:
     ) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             """
-            SELECT
-                r.model_id,
-                COALESCE(m.metric_name, m.evaluation_name) AS metric_name,
-                COALESCE(m.metric_kind, 'unknown') AS metric_kind,
-                AVG(m.score) AS avg_score,
-                COUNT(*) AS observations
-            FROM evaluation_metrics m
-            JOIN evaluation_runs r ON r.evaluation_id = m.evaluation_id
-            WHERE (? IS NULL OR m.metric_kind = ?)
-              AND (? IS NULL OR COALESCE(m.metric_name, m.evaluation_name) = ?)
-            GROUP BY 1, 2, 3
-            ORDER BY avg_score DESC
+            WITH agg AS (
+                SELECT
+                    r.model_id,
+                    COALESCE(m.metric_name, m.evaluation_name) AS metric_name,
+                    COALESCE(m.metric_kind, 'unknown') AS metric_kind,
+                    AVG(m.score) AS avg_score,
+                    COUNT(*) AS observations,
+                    COALESCE(BOOL_AND(m.lower_is_better), FALSE) AS lower_is_better
+                FROM evaluation_metrics m
+                JOIN evaluation_runs r ON r.evaluation_id = m.evaluation_id
+                WHERE (? IS NULL OR m.metric_kind = ?)
+                  AND (? IS NULL OR COALESCE(m.metric_name, m.evaluation_name) = ?)
+                GROUP BY 1, 2, 3
+            )
+            SELECT *
+            FROM agg
+            ORDER BY CASE WHEN lower_is_better THEN avg_score ELSE -avg_score END ASC NULLS LAST
             LIMIT ?
             """,
             [metric_kind, metric_kind, metric_name, metric_name, limit],
@@ -470,6 +475,7 @@ class DuckDBBackend:
                 "metric_kind": row[2],
                 "avg_score": float(row[3]),
                 "observations": int(row[4]),
+                "lower_is_better": bool(row[5]),
             }
             for row in rows
         ]
