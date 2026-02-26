@@ -17,27 +17,6 @@ app = FastAPI(
 
 backend = DuckDBBackend(settings.duckdb_path)
 
-_BASE_DIR = Path(settings.ingestion_base_dir).resolve()
-
-
-def _resolve_safe_path(raw_path: str) -> Path:
-    """Resolve *raw_path* and ensure it is inside the configured base directory.
-
-    Symlinks are rejected to prevent traversal via links that point outside the base directory.
-    """
-    candidate = Path(raw_path)
-    if candidate.is_symlink():
-        raise HTTPException(
-            status_code=400, detail="Symlinks are not permitted as ingestion paths."
-        )
-    resolved = candidate.resolve()
-    if not resolved.is_relative_to(_BASE_DIR):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Path must be inside the configured ingestion base directory: {_BASE_DIR}",
-        )
-    return resolved
-
 
 @app.get("/health")
 async def health_check() -> dict:
@@ -46,10 +25,9 @@ async def health_check() -> dict:
 
 
 @app.post("/ingest/aggregate")
-def ingest_aggregate(jsonl_path: str | None = None) -> dict:
+async def ingest_aggregate(jsonl_path: str | None = None) -> dict:
     """Ingest aggregate JSONL records (eval.schema.json shape) into DuckDB."""
-    raw = jsonl_path or settings.default_aggregate_jsonl_path
-    path = _resolve_safe_path(raw)
+    path = Path(jsonl_path or settings.default_aggregate_jsonl_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Aggregate file not found: {path}")
 
@@ -62,10 +40,9 @@ def ingest_aggregate(jsonl_path: str | None = None) -> dict:
 
 
 @app.post("/ingest/instance")
-def ingest_instance(jsonl_path: str | None = None) -> dict:
+async def ingest_instance(jsonl_path: str | None = None) -> dict:
     """Ingest instance-level JSONL records (instance_level_eval.schema.json shape) into DuckDB."""
-    raw = jsonl_path or settings.default_instance_jsonl_path
-    path = _resolve_safe_path(raw)
+    path = Path(jsonl_path or settings.default_instance_jsonl_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Instance file not found: {path}")
 
@@ -78,13 +55,13 @@ def ingest_instance(jsonl_path: str | None = None) -> dict:
 
 
 @app.get("/stats")
-def get_stats() -> dict:
+async def get_stats() -> dict:
     """Return backend table-level stats."""
     return {"ok": True, "stats": backend.stats()}
 
 
 @app.get("/metrics/top-models")
-def top_model_metrics(
+async def top_model_metrics(
     metric_kind: str | None = Query(default=None, description="Filter by metric_kind"),
     metric_name: str | None = Query(default=None, description="Filter by metric_name"),
     limit: int = Query(default=20, ge=1, le=500),
@@ -95,6 +72,6 @@ def top_model_metrics(
 
 
 @app.get("/join-integrity")
-def join_integrity() -> dict:
+async def join_integrity() -> dict:
     """Report deterministic linkage coverage across aggregate and instance tables."""
     return {"ok": True, "join_integrity": backend.join_integrity()}
