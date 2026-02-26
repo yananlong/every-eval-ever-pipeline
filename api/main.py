@@ -32,7 +32,13 @@ def _resolve_safe_path(raw_path: str) -> Path:
             status_code=400,
             detail="Symlinks are not permitted as the final ingestion path.",
         )
-    resolved = candidate.resolve()
+    try:
+        resolved = candidate.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to resolve path: {exc}",
+        )
     if not resolved.is_relative_to(_BASE_DIR):
         raise HTTPException(
             status_code=400,
