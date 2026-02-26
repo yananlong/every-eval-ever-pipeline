@@ -181,6 +181,7 @@ class DuckDBBackend:
                     eval_library = {}
 
                 try:
+                    run_metrics = 0
                     self.conn.begin()
                     self.conn.execute(
                         "DELETE FROM evaluation_metrics WHERE evaluation_id = ?",
@@ -332,9 +333,10 @@ class DuckDBBackend:
                                 json.dumps(score_details, ensure_ascii=False),
                             ],
                         )
-                        metrics += 1
+                        run_metrics += 1
 
                     self.conn.commit()
+                    metrics += run_metrics
                     runs += 1
                 except Exception:
                     self.conn.rollback()
