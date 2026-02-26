@@ -453,7 +453,7 @@ class DuckDBBackend:
                     COALESCE(m.metric_kind, 'unknown') AS metric_kind,
                     AVG(m.score) AS avg_score,
                     COUNT(*) AS observations,
-                    COALESCE(BOOL_AND(m.lower_is_better), FALSE) AS lower_is_better
+                    COALESCE(BOOL_OR(m.lower_is_better), FALSE) AS lower_is_better
                 FROM evaluation_metrics m
                 JOIN evaluation_runs r ON r.evaluation_id = m.evaluation_id
                 WHERE (? IS NULL OR m.metric_kind = ?)
