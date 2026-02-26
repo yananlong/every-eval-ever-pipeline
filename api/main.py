@@ -23,12 +23,14 @@ _BASE_DIR = Path(settings.ingestion_base_dir).resolve()
 def _resolve_safe_path(raw_path: str) -> Path:
     """Resolve *raw_path* and ensure it is inside the configured base directory.
 
-    Symlinks are rejected to prevent traversal via links that point outside the base directory.
+    Symlinks are rejected when the final ingestion path itself is a symlink, and any
+    path whose resolved location is outside the base directory is also rejected.
     """
     candidate = Path(raw_path)
     if candidate.is_symlink():
         raise HTTPException(
-            status_code=400, detail="Symlinks are not permitted as ingestion paths."
+            status_code=400,
+            detail="Symlinks are not permitted as the final ingestion path.",
         )
     resolved = candidate.resolve()
     if not resolved.is_relative_to(_BASE_DIR):
