@@ -180,6 +180,13 @@ class DuckDBBackend:
                 if not isinstance(eval_library, dict):
                     eval_library = {}
 
+                model_id = str(model_info.get("id", "")).strip()
+                if not model_id:
+                    raise ValueError(
+                        f"Row with evaluation_id={evaluation_id!r} is missing required"
+                        " field model_info.id"
+                    )
+
                 self.conn.execute(
                     "DELETE FROM evaluation_metrics WHERE evaluation_id = ?",
                     [evaluation_id],
@@ -221,7 +228,7 @@ class DuckDBBackend:
                         source_meta.get("source_organization_name"),
                         source_meta.get("source_organization_url"),
                         source_meta.get("evaluator_relationship"),
-                        model_info.get("id"),
+                        model_id,
                         model_info.get("name"),
                         model_info.get("developer"),
                         eval_library.get("name"),
