@@ -187,159 +187,165 @@ class DuckDBBackend:
                         " field model_info.id"
                     )
 
-                self.conn.execute(
-                    "DELETE FROM evaluation_metrics WHERE evaluation_id = ?",
-                    [evaluation_id],
-                )
-                self.conn.execute(
-                    "DELETE FROM evaluation_runs WHERE evaluation_id = ?",
-                    [evaluation_id],
-                )
-
-                self.conn.execute(
-                    """
-                    INSERT INTO evaluation_runs (
-                        evaluation_id,
-                        schema_version,
-                        retrieved_timestamp,
-                        source_name,
-                        source_type,
-                        source_organization_name,
-                        source_organization_url,
-                        evaluator_relationship,
-                        model_id,
-                        model_name,
-                        model_developer,
-                        eval_library_name,
-                        eval_library_version,
-                        run_fingerprint,
-                        content_hash,
-                        hash_algorithm,
-                        canonicalization_version,
-                        raw_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        evaluation_id,
-                        str(payload.get("schema_version", "")),
-                        str(payload.get("retrieved_timestamp", "")),
-                        source_meta.get("source_name"),
-                        source_meta.get("source_type"),
-                        source_meta.get("source_organization_name"),
-                        source_meta.get("source_organization_url"),
-                        source_meta.get("evaluator_relationship"),
-                        model_id,
-                        model_info.get("name"),
-                        model_info.get("developer"),
-                        eval_library.get("name"),
-                        eval_library.get("version"),
-                        dedupe.get("run_fingerprint"),
-                        dedupe.get("content_hash"),
-                        dedupe.get("hash_algorithm"),
-                        dedupe.get("canonicalization_version"),
-                        json.dumps(payload, ensure_ascii=False),
-                    ],
-                )
-
-                result_items = payload.get("evaluation_results")
-                if not isinstance(result_items, list):
-                    result_items = []
-
-                for metric_index, result in enumerate(result_items):
-                    if not isinstance(result, dict):
-                        continue
-
-                    metric_cfg = result.get("metric_config") or {}
-                    if not isinstance(metric_cfg, dict):
-                        metric_cfg = {}
-
-                    score_details = result.get("score_details") or {}
-                    if not isinstance(score_details, dict):
-                        score_details = {}
-
-                    score = _to_float(score_details.get("score"))
-                    if score is None:
-                        continue
-
-                    evaluation_name = str(result.get("evaluation_name", "")).strip()
-                    if not evaluation_name:
-                        continue
-
-                    evaluation_result_id = result.get("evaluation_result_id")
-                    if evaluation_result_id is not None:
-                        evaluation_result_id = str(evaluation_result_id)
-
-                    result_join_id, join_key_source = self._result_join_id(
-                        evaluation_result_id,
-                        evaluation_name,
+                try:
+                    self.conn.begin()
+                    self.conn.execute(
+                        "DELETE FROM evaluation_metrics WHERE evaluation_id = ?",
+                        [evaluation_id],
                     )
-
-                    source_data = result.get("source_data") or {}
-                    if not isinstance(source_data, dict):
-                        source_data = {}
-
-                    metric_parameters = metric_cfg.get("metric_parameters")
-                    metric_parameters_json = None
-                    if isinstance(metric_parameters, dict):
-                        metric_parameters_json = json.dumps(
-                            metric_parameters,
-                            sort_keys=True,
-                            ensure_ascii=False,
-                        )
+                    self.conn.execute(
+                        "DELETE FROM evaluation_runs WHERE evaluation_id = ?",
+                        [evaluation_id],
+                    )
 
                     self.conn.execute(
                         """
-                        INSERT INTO evaluation_metrics (
+                        INSERT INTO evaluation_runs (
                             evaluation_id,
-                            metric_index,
-                            evaluation_result_id,
-                            result_join_id,
-                            join_key_source,
-                            evaluation_name,
-                            metric_id,
-                            metric_name,
-                            metric_kind,
-                            metric_unit,
-                            metric_parameters_json,
-                            lower_is_better,
-                            score_type,
-                            min_score,
-                            max_score,
-                            score,
-                            source_dataset_name,
+                            schema_version,
+                            retrieved_timestamp,
+                            source_name,
                             source_type,
-                            source_ref,
-                            metric_config_json,
-                            score_details_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            source_organization_name,
+                            source_organization_url,
+                            evaluator_relationship,
+                            model_id,
+                            model_name,
+                            model_developer,
+                            eval_library_name,
+                            eval_library_version,
+                            run_fingerprint,
+                            content_hash,
+                            hash_algorithm,
+                            canonicalization_version,
+                            raw_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         [
                             evaluation_id,
-                            metric_index,
-                            evaluation_result_id,
-                            result_join_id,
-                            join_key_source,
-                            evaluation_name,
-                            metric_cfg.get("metric_id"),
-                            metric_cfg.get("metric_name"),
-                            metric_cfg.get("metric_kind"),
-                            metric_cfg.get("metric_unit"),
-                            metric_parameters_json,
-                            metric_cfg.get("lower_is_better"),
-                            metric_cfg.get("score_type"),
-                            _to_float(metric_cfg.get("min_score")),
-                            _to_float(metric_cfg.get("max_score")),
-                            score,
-                            source_data.get("dataset_name"),
-                            source_data.get("source_type"),
-                            self._source_reference(source_data),
-                            json.dumps(metric_cfg, ensure_ascii=False),
-                            json.dumps(score_details, ensure_ascii=False),
+                            str(payload.get("schema_version", "")),
+                            str(payload.get("retrieved_timestamp", "")),
+                            source_meta.get("source_name"),
+                            source_meta.get("source_type"),
+                            source_meta.get("source_organization_name"),
+                            source_meta.get("source_organization_url"),
+                            source_meta.get("evaluator_relationship"),
+                            model_id,
+                            model_info.get("name"),
+                            model_info.get("developer"),
+                            eval_library.get("name"),
+                            eval_library.get("version"),
+                            dedupe.get("run_fingerprint"),
+                            dedupe.get("content_hash"),
+                            dedupe.get("hash_algorithm"),
+                            dedupe.get("canonicalization_version"),
+                            json.dumps(payload, ensure_ascii=False),
                         ],
                     )
-                    metrics += 1
 
-                runs += 1
+                    result_items = payload.get("evaluation_results")
+                    if not isinstance(result_items, list):
+                        result_items = []
+
+                    for metric_index, result in enumerate(result_items):
+                        if not isinstance(result, dict):
+                            continue
+
+                        metric_cfg = result.get("metric_config") or {}
+                        if not isinstance(metric_cfg, dict):
+                            metric_cfg = {}
+
+                        score_details = result.get("score_details") or {}
+                        if not isinstance(score_details, dict):
+                            score_details = {}
+
+                        score = _to_float(score_details.get("score"))
+                        if score is None:
+                            continue
+
+                        evaluation_name = str(result.get("evaluation_name", "")).strip()
+                        if not evaluation_name:
+                            continue
+
+                        evaluation_result_id = result.get("evaluation_result_id")
+                        if evaluation_result_id is not None:
+                            evaluation_result_id = str(evaluation_result_id)
+
+                        result_join_id, join_key_source = self._result_join_id(
+                            evaluation_result_id,
+                            evaluation_name,
+                        )
+
+                        source_data = result.get("source_data") or {}
+                        if not isinstance(source_data, dict):
+                            source_data = {}
+
+                        metric_parameters = metric_cfg.get("metric_parameters")
+                        metric_parameters_json = None
+                        if isinstance(metric_parameters, dict):
+                            metric_parameters_json = json.dumps(
+                                metric_parameters,
+                                sort_keys=True,
+                                ensure_ascii=False,
+                            )
+
+                        self.conn.execute(
+                            """
+                            INSERT INTO evaluation_metrics (
+                                evaluation_id,
+                                metric_index,
+                                evaluation_result_id,
+                                result_join_id,
+                                join_key_source,
+                                evaluation_name,
+                                metric_id,
+                                metric_name,
+                                metric_kind,
+                                metric_unit,
+                                metric_parameters_json,
+                                lower_is_better,
+                                score_type,
+                                min_score,
+                                max_score,
+                                score,
+                                source_dataset_name,
+                                source_type,
+                                source_ref,
+                                metric_config_json,
+                                score_details_json
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            [
+                                evaluation_id,
+                                metric_index,
+                                evaluation_result_id,
+                                result_join_id,
+                                join_key_source,
+                                evaluation_name,
+                                metric_cfg.get("metric_id"),
+                                metric_cfg.get("metric_name"),
+                                metric_cfg.get("metric_kind"),
+                                metric_cfg.get("metric_unit"),
+                                metric_parameters_json,
+                                metric_cfg.get("lower_is_better"),
+                                metric_cfg.get("score_type"),
+                                _to_float(metric_cfg.get("min_score")),
+                                _to_float(metric_cfg.get("max_score")),
+                                score,
+                                source_data.get("dataset_name"),
+                                source_data.get("source_type"),
+                                self._source_reference(source_data),
+                                json.dumps(metric_cfg, ensure_ascii=False),
+                                json.dumps(score_details, ensure_ascii=False),
+                            ],
+                        )
+                        metrics += 1
+
+                    runs += 1
+                    self.conn.commit()
+                except Exception:
+                    self.conn.rollback()
+                    raise
 
         return {"runs_ingested": runs, "metrics_ingested": metrics}
 
