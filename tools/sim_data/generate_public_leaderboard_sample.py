@@ -373,7 +373,6 @@ def infer_metric_identity(
             "rte",
             "nli",
             "tweetsent",
-            "offensive",
             "hate_speech",
             "sts",
         ]
