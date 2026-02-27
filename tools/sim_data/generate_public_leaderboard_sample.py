@@ -368,7 +368,6 @@ def infer_metric_identity(
             "math",
             "gpqa",
             "musr",
-            "mmlu",
             "challenge",
             "exams",
             "rte",
