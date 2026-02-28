@@ -239,6 +239,7 @@ def infer_metric_identity(
         re.search(r"pass\s*[@_ ]\s*(\d+)", lowered)
         or re.search(r"passat(\d+)", compact)
         or re.search(r"pass_at_(\d+)", compact)
+        or re.search(r"pass(\d+)", compact)
     )
     if pass_match:
         k = int(pass_match.group(1))
