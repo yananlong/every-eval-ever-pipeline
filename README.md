@@ -20,6 +20,13 @@ uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /metrics/top-models?metric_kind=...&metric_name=...&limit=...`
 - `GET /join-integrity`
 
+## Simulation Tooling
+
+Synthetic data for backend testing is available in `tools/sim_data/`:
+
+- `generate_public_leaderboard_sample.py`: Scrapes diverse public leaderboards to populate the backend with high-volume aggregate data.
+- `generate_backend_sim_data.py`: Generates "pathology" fixtures (collisions, ambiguities) and linked instance-level JSONLs from the real `EEE_datastore` for code integrity validation.
+
 ## Why this backend shape
 
 - Stores aggregate runs and per-metric rows in normalized tables for SQL queries.

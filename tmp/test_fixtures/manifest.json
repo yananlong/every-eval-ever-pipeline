@@ -1,0 +1,89 @@
+{
+  "generated_at": "2026-03-09T11:30:49.080048+00:00",
+  "seed": 42,
+  "dataset": "evaleval/EEE_datastore",
+  "dataset_sha": "2ec23ea936581fd10828817298f4afd405227433",
+  "configs": [
+    "global-mmlu-lite",
+    "hfopenllm_v2",
+    "reward-bench"
+  ],
+  "rows_per_config": 1,
+  "instances_per_aggregate": 1,
+  "schema_compatible": true,
+  "source_pull_log": [
+    {
+      "config": "global-mmlu-lite",
+      "rows_pulled": 1
+    },
+    {
+      "config": "hfopenllm_v2",
+      "rows_pulled": 1
+    },
+    {
+      "config": "reward-bench",
+      "rows_pulled": 1
+    }
+  ],
+  "counts": {
+    "baseline_aggregate_files": 3,
+    "pathology_aggregate_files": 3,
+    "instance_rows_total": 27
+  },
+  "fixtures": [
+    {
+      "bucket": "baseline",
+      "scenario": "baseline_real",
+      "aggregate_path": "baseline/data/global-mmlu-lite/alibaba/qwen3-235b-a22b-instruct-2507/879c853a-49a7-476d-82fd-4b280c3dbfac.json",
+      "instance_path": "baseline/data/global-mmlu-lite/alibaba/qwen3-235b-a22b-instruct-2507/879c853a-49a7-476d-82fd-4b280c3dbfac.jsonl",
+      "instance_rows": 1,
+      "expected_backend_action": "accept",
+      "notes": "Real pulled aggregate row with synthetic instance drilldown rows."
+    },
+    {
+      "bucket": "baseline",
+      "scenario": "baseline_real",
+      "aggregate_path": "baseline/data/hfopenllm_v2/0-hero/Matter-0.2-7B-DPO/5ffac35b-bc8d-4125-8a62-42e293dc5d53.json",
+      "instance_path": "baseline/data/hfopenllm_v2/0-hero/Matter-0.2-7B-DPO/5ffac35b-bc8d-4125-8a62-42e293dc5d53.jsonl",
+      "instance_rows": 1,
+      "expected_backend_action": "accept",
+      "notes": "Real pulled aggregate row with synthetic instance drilldown rows."
+    },
+    {
+      "bucket": "baseline",
+      "scenario": "baseline_real",
+      "aggregate_path": "baseline/data/reward-bench/0-hero/Matter-0.1-7B-DPO-preview/4de942ab-46f7-4ad4-9125-8d94f80d9432.json",
+      "instance_path": "baseline/data/reward-bench/0-hero/Matter-0.1-7B-DPO-preview/4de942ab-46f7-4ad4-9125-8d94f80d9432.jsonl",
+      "instance_rows": 1,
+      "expected_backend_action": "accept",
+      "notes": "Real pulled aggregate row with synthetic instance drilldown rows."
+    },
+    {
+      "bucket": "pathology",
+      "scenario": "dedupe_same_content_diff_volatile_fields",
+      "aggregate_path": "pathology/data/global-mmlu-lite/alibaba/qwen3-235b-a22b-instruct-2507/add6776a-39ab-4ea9-a062-a4708a202d1b.json",
+      "instance_path": "pathology/data/global-mmlu-lite/alibaba/qwen3-235b-a22b-instruct-2507/add6776a-39ab-4ea9-a062-a4708a202d1b.jsonl",
+      "instance_rows": 8,
+      "expected_backend_action": "dedupe_drop_if_fingerprint_enabled",
+      "notes": "Equivalent run with changed volatile identifiers and reordered results."
+    },
+    {
+      "bucket": "pathology",
+      "scenario": "evaluation_id_collision_different_scores",
+      "aggregate_path": "pathology/data/hfopenllm_v2/0-hero/Matter-0.2-7B-DPO/94c617b0-add0-4155-97d9-4f0edebd3e9f.json",
+      "instance_path": "pathology/data/hfopenllm_v2/0-hero/Matter-0.2-7B-DPO/94c617b0-add0-4155-97d9-4f0edebd3e9f.jsonl",
+      "instance_rows": 8,
+      "expected_backend_action": "quarantine_conflict_if_idempotency_enforced",
+      "notes": "Same evaluation_id as baseline but modified score payload."
+    },
+    {
+      "bucket": "pathology",
+      "scenario": "ambiguous_metric_identity_same_evaluation_name",
+      "aggregate_path": "pathology/data/reward-bench/0-hero/Matter-0.1-7B-DPO-preview/d1e6b129-0066-4103-9ead-d4435259cc35.json",
+      "instance_path": "pathology/data/reward-bench/0-hero/Matter-0.1-7B-DPO-preview/d1e6b129-0066-4103-9ead-d4435259cc35.jsonl",
+      "instance_rows": 8,
+      "expected_backend_action": "ambiguous_join_without_metric_id",
+      "notes": "Same evaluation_name appears twice with different metric descriptions."
+    }
+  ]
+}
