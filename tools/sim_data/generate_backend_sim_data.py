@@ -243,7 +243,7 @@ def synthesize_instances(
             f"[{evaluation_name}] Simulated prompt #{i}. "
             "Answer with a single option."
         )
-        sample_hash_input = f"{prompt}|{gold}"
+        sample_hash_input = f"{evaluation_id}|{model_id}|{evaluation_name}|{prompt}|{gold}"
         sample_hash = hashlib.sha256(sample_hash_input.encode("utf-8")).hexdigest()
         latency_ms = 120 + int(rng.random() * 850)
         input_tokens = 60 + int(rng.random() * 200)
