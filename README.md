@@ -27,6 +27,8 @@ Synthetic data for backend testing is available in `tools/sim_data/`:
 - `generate_public_leaderboard_sample.py`: Scrapes diverse public leaderboards to populate the backend with high-volume aggregate data.
 - `generate_backend_sim_data.py`: Generates "pathology" fixtures (collisions, ambiguities) and linked instance-level JSONLs from the real `EEE_datastore` for code integrity validation.
 
+A curated sample fixture pack is checked in at `data/simulated/test_fixtures/` (see `manifest.json` there for the generation parameters). To regenerate locally, run the script with `--output-dir tmp/test_fixtures`; the `tmp/` directory is gitignored so locally-generated packs are never accidentally committed.
+
 ## Why this backend shape
 
 - Stores aggregate runs and per-metric rows in normalized tables for SQL queries.

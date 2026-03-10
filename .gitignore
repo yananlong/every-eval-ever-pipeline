@@ -32,3 +32,6 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Temporary / scratch outputs (generated locally; do not commit)
+tmp/
