@@ -112,3 +112,19 @@ async def top_model_metrics(
 async def join_integrity() -> dict:
     """Report deterministic linkage coverage across aggregate and instance tables."""
     return {"ok": True, "join_integrity": backend.join_integrity()}
+
+
+@app.get("/quality/orphan-runs")
+async def quality_orphan_runs(
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> dict:
+    """Report runs with detailed instance references that remain missing, partial, or repaired."""
+    return {"ok": True, "rows": backend.orphan_runs(limit=limit)}
+
+
+@app.get("/quality/identifier-issues")
+async def quality_identifier_issues(
+    limit: int = Query(default=50, ge=1, le=500),
+) -> dict:
+    """Report identifier sparsity plus repaired or unvalidated instance linkage examples."""
+    return {"ok": True, "issues": backend.identifier_issues(limit=limit)}

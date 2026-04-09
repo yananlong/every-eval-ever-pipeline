@@ -19,6 +19,15 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _to_int(value: Any) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_name(value: str) -> str:
     cleaned = re.sub(r"\s+", " ", value.strip().lower())
     return cleaned
@@ -26,6 +35,27 @@ def _normalize_name(value: str) -> str:
 
 def _name_join_id(evaluation_name: str) -> str:
     return f"name:{_normalize_name(evaluation_name)}"
+
+
+_UUID_FILE_RE = re.compile(
+    r"(?P<uuid>[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:_samples)?(?:\.jsonl?)?$",
+    re.IGNORECASE,
+)
+
+
+def _file_link_key(file_path: str | Path | None) -> str | None:
+    if file_path is None:
+        return None
+
+    filename = Path(str(file_path)).name.strip()
+    if not filename:
+        return None
+
+    match = _UUID_FILE_RE.search(filename)
+    if match:
+        return f"uuid:{match.group('uuid').lower()}"
+
+    return f"name:{filename.lower()}"
 
 
 class DuckDBBackend:
@@ -58,8 +88,18 @@ class DuckDBBackend:
                 content_hash TEXT,
                 hash_algorithm TEXT,
                 canonicalization_version TEXT,
+                detailed_results_file_path TEXT,
+                detailed_results_file_key TEXT,
+                detailed_results_total_rows INTEGER,
                 raw_json TEXT NOT NULL
             )
+            """
+        )
+
+        self.conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_runs_detailed_results_key
+            ON evaluation_runs (detailed_results_file_key)
             """
         )
 
@@ -122,6 +162,9 @@ class DuckDBBackend:
                 result_join_id TEXT NOT NULL,
                 name_join_id TEXT,
                 join_key_source TEXT NOT NULL,
+                original_evaluation_id TEXT,
+                evaluation_id_validation_status TEXT,
+                ingest_source_path TEXT,
                 model_id TEXT NOT NULL,
                 score DOUBLE,
                 is_correct BOOLEAN,
@@ -146,6 +189,24 @@ class DuckDBBackend:
         # Backward-compatible migration path for databases created before name_join_id existed.
         self.conn.execute(
             """
+            ALTER TABLE evaluation_runs
+            ADD COLUMN IF NOT EXISTS detailed_results_file_path TEXT
+            """
+        )
+        self.conn.execute(
+            """
+            ALTER TABLE evaluation_runs
+            ADD COLUMN IF NOT EXISTS detailed_results_file_key TEXT
+            """
+        )
+        self.conn.execute(
+            """
+            ALTER TABLE evaluation_runs
+            ADD COLUMN IF NOT EXISTS detailed_results_total_rows INTEGER
+            """
+        )
+        self.conn.execute(
+            """
             ALTER TABLE evaluation_metrics
             ADD COLUMN IF NOT EXISTS name_join_id TEXT
             """
@@ -156,6 +217,59 @@ class DuckDBBackend:
             ADD COLUMN IF NOT EXISTS name_join_id TEXT
             """
         )
+        self.conn.execute(
+            """
+            ALTER TABLE instance_evaluations
+            ADD COLUMN IF NOT EXISTS original_evaluation_id TEXT
+            """
+        )
+        self.conn.execute(
+            """
+            ALTER TABLE instance_evaluations
+            ADD COLUMN IF NOT EXISTS evaluation_id_validation_status TEXT
+            """
+        )
+        self.conn.execute(
+            """
+            ALTER TABLE instance_evaluations
+            ADD COLUMN IF NOT EXISTS ingest_source_path TEXT
+            """
+        )
+
+        runs_missing_detailed_results = self.conn.execute(
+            """
+            SELECT evaluation_id, raw_json
+            FROM evaluation_runs
+            WHERE detailed_results_file_key IS NULL
+              AND raw_json LIKE '%detailed_evaluation_results%'
+            """
+        ).fetchall()
+        for evaluation_id, raw_json in runs_missing_detailed_results:
+            try:
+                payload = json.loads(raw_json)
+            except json.JSONDecodeError:
+                continue
+
+            (
+                detailed_results_file_path,
+                detailed_results_file_key,
+                detailed_results_total_rows,
+            ) = self._detailed_results_info(payload)
+            self.conn.execute(
+                """
+                UPDATE evaluation_runs
+                SET detailed_results_file_path = ?,
+                    detailed_results_file_key = ?,
+                    detailed_results_total_rows = ?
+                WHERE evaluation_id = ?
+                """,
+                [
+                    detailed_results_file_path,
+                    detailed_results_file_key,
+                    detailed_results_total_rows,
+                    evaluation_id,
+                ],
+            )
 
         metrics_missing_name_join = self.conn.execute(
             """
@@ -191,6 +305,21 @@ class DuckDBBackend:
                 [_name_join_id(evaluation_name), evaluation_id, sample_id, result_join_id],
             )
 
+        self.conn.execute(
+            """
+            UPDATE instance_evaluations
+            SET original_evaluation_id = evaluation_id
+            WHERE original_evaluation_id IS NULL
+            """
+        )
+        self.conn.execute(
+            """
+            UPDATE instance_evaluations
+            SET evaluation_id_validation_status = 'legacy_unvalidated'
+            WHERE evaluation_id_validation_status IS NULL
+            """
+        )
+
     def _source_reference(self, source_data: dict[str, Any]) -> str | None:
         source_type = source_data.get("source_type")
         if source_type == "url":
@@ -216,6 +345,45 @@ class DuckDBBackend:
         if evaluation_result_id:
             return evaluation_result_id, name_join_id, "evaluation_result_id"
         return name_join_id, name_join_id, "evaluation_name_fallback"
+
+    def _detailed_results_info(
+        self, payload: dict[str, Any]
+    ) -> tuple[str | None, str | None, int | None]:
+        detailed_results = payload.get("detailed_evaluation_results") or {}
+        if not isinstance(detailed_results, dict):
+            return None, None, None
+
+        file_path = detailed_results.get("file_path")
+        if file_path is not None:
+            file_path = str(file_path).strip() or None
+
+        return (
+            file_path,
+            _file_link_key(file_path),
+            _to_int(detailed_results.get("total_rows")),
+        )
+
+    def _expected_evaluation_id_for_instance_path(
+        self, path: Path
+    ) -> tuple[str | None, str]:
+        file_link_key = _file_link_key(path)
+        if file_link_key is None:
+            return None, "no_matching_detailed_results"
+
+        rows = self.conn.execute(
+            """
+            SELECT evaluation_id
+            FROM evaluation_runs
+            WHERE detailed_results_file_key = ?
+            ORDER BY evaluation_id
+            """,
+            [file_link_key],
+        ).fetchall()
+        if len(rows) == 1:
+            return str(rows[0][0]), "matched_detailed_results"
+        if len(rows) > 1:
+            return None, "ambiguous_detailed_results"
+        return None, "no_matching_detailed_results"
 
     def ingest_aggregate_jsonl(self, jsonl_path: str | Path) -> dict[str, int]:
         path = Path(jsonl_path)
@@ -259,6 +427,11 @@ class DuckDBBackend:
                     )
 
                 try:
+                    (
+                        detailed_results_file_path,
+                        detailed_results_file_key,
+                        detailed_results_total_rows,
+                    ) = self._detailed_results_info(payload)
                     self.conn.begin()
                     self.conn.execute(
                         "DELETE FROM evaluation_metrics WHERE evaluation_id = ?",
@@ -289,8 +462,11 @@ class DuckDBBackend:
                             content_hash,
                             hash_algorithm,
                             canonicalization_version,
+                            detailed_results_file_path,
+                            detailed_results_file_key,
+                            detailed_results_total_rows,
                             raw_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         [
                             evaluation_id,
@@ -310,6 +486,9 @@ class DuckDBBackend:
                             dedupe.get("content_hash"),
                             dedupe.get("hash_algorithm"),
                             dedupe.get("canonicalization_version"),
+                            detailed_results_file_path,
+                            detailed_results_file_key,
+                            detailed_results_total_rows,
                             json.dumps(payload, ensure_ascii=False),
                         ],
                     )
@@ -422,22 +601,44 @@ class DuckDBBackend:
 
         return {"runs_ingested": runs, "metrics_ingested": metrics}
 
-    def ingest_instance_jsonl(self, jsonl_path: str | Path) -> dict[str, int]:
+    def ingest_instance_jsonl(self, jsonl_path: str | Path) -> dict[str, Any]:
         path = Path(jsonl_path)
         if not path.exists():
             raise FileNotFoundError(path)
 
         rows = 0
+        validated_rows = 0
+        repaired_rows = 0
+        filled_rows = 0
+        unvalidated_rows = 0
+        expected_evaluation_id, file_link_lookup_status = (
+            self._expected_evaluation_id_for_instance_path(path)
+        )
         with path.open("r", encoding="utf-8") as handle:
             for raw_line in handle:
                 if not raw_line.strip():
                     continue
 
                 payload = json.loads(raw_line)
-                evaluation_id = str(payload.get("evaluation_id", "")).strip()
+                original_evaluation_id = str(payload.get("evaluation_id", "")).strip()
                 sample_id = str(payload.get("sample_id", "")).strip()
                 evaluation_name = str(payload.get("evaluation_name", "")).strip()
                 model_id = str(payload.get("model_id", "")).strip()
+
+                evaluation_id = original_evaluation_id
+                if expected_evaluation_id is not None:
+                    if original_evaluation_id == expected_evaluation_id:
+                        evaluation_id_validation_status = "validated_from_detailed_results"
+                    elif original_evaluation_id:
+                        evaluation_id = expected_evaluation_id
+                        evaluation_id_validation_status = "repaired_from_detailed_results"
+                    else:
+                        evaluation_id = expected_evaluation_id
+                        evaluation_id_validation_status = "filled_from_detailed_results"
+                elif file_link_lookup_status == "ambiguous_detailed_results":
+                    evaluation_id_validation_status = "payload_only_ambiguous_file_link"
+                else:
+                    evaluation_id_validation_status = "payload_only_unvalidated"
 
                 if not all([evaluation_id, sample_id, evaluation_name, model_id]):
                     continue
@@ -460,13 +661,17 @@ class DuckDBBackend:
                 if not isinstance(is_correct, bool):
                     is_correct = None
 
-                self.conn.execute(
-                    """
-                    DELETE FROM instance_evaluations
-                    WHERE evaluation_id = ? AND sample_id = ? AND result_join_id = ? AND name_join_id = ?
-                    """,
-                    [evaluation_id, sample_id, result_join_id, name_join_id],
-                )
+                delete_evaluation_ids = {evaluation_id}
+                if original_evaluation_id and original_evaluation_id != evaluation_id:
+                    delete_evaluation_ids.add(original_evaluation_id)
+                for delete_evaluation_id in delete_evaluation_ids:
+                    self.conn.execute(
+                        """
+                        DELETE FROM instance_evaluations
+                        WHERE evaluation_id = ? AND sample_id = ? AND result_join_id = ? AND name_join_id = ?
+                        """,
+                        [delete_evaluation_id, sample_id, result_join_id, name_join_id],
+                    )
 
                 self.conn.execute(
                     """
@@ -478,11 +683,14 @@ class DuckDBBackend:
                         result_join_id,
                         name_join_id,
                         join_key_source,
+                        original_evaluation_id,
+                        evaluation_id_validation_status,
+                        ingest_source_path,
                         model_id,
                         score,
                         is_correct,
                         raw_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         evaluation_id,
@@ -492,15 +700,34 @@ class DuckDBBackend:
                         result_join_id,
                         name_join_id,
                         join_key_source,
+                        original_evaluation_id or None,
+                        evaluation_id_validation_status,
+                        str(path),
                         model_id,
                         score,
                         is_correct,
                         json.dumps(payload, ensure_ascii=False),
                     ],
                 )
+                if evaluation_id_validation_status == "validated_from_detailed_results":
+                    validated_rows += 1
+                elif evaluation_id_validation_status == "repaired_from_detailed_results":
+                    repaired_rows += 1
+                elif evaluation_id_validation_status == "filled_from_detailed_results":
+                    filled_rows += 1
+                else:
+                    unvalidated_rows += 1
                 rows += 1
 
-        return {"instance_rows_ingested": rows}
+        return {
+            "instance_rows_ingested": rows,
+            "instance_rows_validated": validated_rows,
+            "instance_rows_repaired": repaired_rows,
+            "instance_rows_filled_from_file_link": filled_rows,
+            "instance_rows_unvalidated": unvalidated_rows,
+            "file_link_lookup_status": file_link_lookup_status,
+            "expected_evaluation_id": expected_evaluation_id,
+        }
 
     def stats(self) -> dict[str, int]:
         runs_count = int(self.conn.execute("SELECT COUNT(*) FROM evaluation_runs").fetchone()[0])
@@ -589,6 +816,49 @@ class DuckDBBackend:
                 "SELECT COUNT(*) FROM instance_evaluations WHERE evaluation_result_id IS NOT NULL"
             ).fetchone()[0]
         )
+        runs_with_detailed_results = int(
+            self.conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM evaluation_runs
+                WHERE detailed_results_file_path IS NOT NULL
+                """
+            ).fetchone()[0]
+        )
+        instance_rows_validated = int(
+            self.conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM instance_evaluations
+                WHERE evaluation_id_validation_status = 'validated_from_detailed_results'
+                """
+            ).fetchone()[0]
+        )
+        instance_rows_repaired = int(
+            self.conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM instance_evaluations
+                WHERE evaluation_id_validation_status IN (
+                    'repaired_from_detailed_results',
+                    'filled_from_detailed_results'
+                )
+                """
+            ).fetchone()[0]
+        )
+        instance_rows_unvalidated = int(
+            self.conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM instance_evaluations
+                WHERE evaluation_id_validation_status IN (
+                    'payload_only_unvalidated',
+                    'payload_only_ambiguous_file_link',
+                    'legacy_unvalidated'
+                )
+                """
+            ).fetchone()[0]
+        )
 
         matched_instances_exact = int(
             self.conn.execute(
@@ -628,11 +898,286 @@ class DuckDBBackend:
         return {
             "aggregate_metrics_total": metrics_total,
             "aggregate_metrics_with_evaluation_result_id": metrics_with_result_id,
+            "aggregate_runs_with_detailed_results": runs_with_detailed_results,
             "instance_rows_total": instance_total,
             "instance_rows_with_evaluation_result_id": instance_with_result_id,
+            "instance_rows_validated_from_detailed_results": instance_rows_validated,
+            "instance_rows_repaired_via_detailed_results": instance_rows_repaired,
+            "instance_rows_without_trusted_file_link_validation": instance_rows_unvalidated,
             "instance_rows_joined_by_evaluation_result_id": matched_instances_exact,
             "instance_rows_joined_by_name_fallback": matched_instances_name_fallback,
             "instance_rows_joined_to_aggregate": (
                 matched_instances_exact + matched_instances_name_fallback
             ),
+        }
+
+    def orphan_runs(self, limit: int = 100) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            WITH coverage AS (
+                SELECT
+                    r.evaluation_id,
+                    r.source_name,
+                    r.model_id,
+                    r.detailed_results_file_path,
+                    r.detailed_results_total_rows,
+                    COUNT(i.sample_id) AS ingested_instance_rows,
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN i.evaluation_id_validation_status IN (
+                                    'repaired_from_detailed_results',
+                                    'filled_from_detailed_results'
+                                ) THEN 1
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS repaired_instance_rows
+                FROM evaluation_runs r
+                LEFT JOIN instance_evaluations i
+                  ON i.evaluation_id = r.evaluation_id
+                WHERE r.detailed_results_file_path IS NOT NULL
+                GROUP BY 1, 2, 3, 4, 5
+            ),
+            issues AS (
+                SELECT
+                    evaluation_id,
+                    source_name,
+                    model_id,
+                    detailed_results_file_path,
+                    detailed_results_total_rows,
+                    ingested_instance_rows,
+                    repaired_instance_rows,
+                    CASE
+                        WHEN detailed_results_total_rows IS NULL THEN NULL
+                        ELSE GREATEST(detailed_results_total_rows - ingested_instance_rows, 0)
+                    END AS missing_instance_rows,
+                    CASE
+                        WHEN ingested_instance_rows = 0 THEN 'missing_ingested_instances'
+                        WHEN repaired_instance_rows > 0 THEN 'repaired_instance_evaluation_id'
+                        WHEN detailed_results_total_rows IS NOT NULL
+                             AND ingested_instance_rows < detailed_results_total_rows
+                            THEN 'partial_instance_ingest'
+                        ELSE NULL
+                    END AS issue_type
+                FROM coverage
+            )
+            SELECT
+                evaluation_id,
+                source_name,
+                model_id,
+                detailed_results_file_path,
+                detailed_results_total_rows,
+                ingested_instance_rows,
+                missing_instance_rows,
+                repaired_instance_rows,
+                issue_type
+            FROM issues
+            WHERE issue_type IS NOT NULL
+            ORDER BY
+                CASE issue_type
+                    WHEN 'missing_ingested_instances' THEN 0
+                    WHEN 'partial_instance_ingest' THEN 1
+                    WHEN 'repaired_instance_evaluation_id' THEN 2
+                    ELSE 3
+                END,
+                evaluation_id
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchall()
+
+        return [
+            {
+                "evaluation_id": row[0],
+                "source_name": row[1],
+                "model_id": row[2],
+                "detailed_results_file_path": row[3],
+                "detailed_results_total_rows": (
+                    int(row[4]) if row[4] is not None else None
+                ),
+                "ingested_instance_rows": int(row[5]),
+                "missing_instance_rows": int(row[6]) if row[6] is not None else None,
+                "repaired_instance_rows": int(row[7]),
+                "issue_type": row[8],
+            }
+            for row in rows
+        ]
+
+    def identifier_issues(self, limit: int = 100) -> dict[str, Any]:
+        summary = {
+            "aggregate_metrics_missing_evaluation_result_id": int(
+                self.conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM evaluation_metrics
+                    WHERE evaluation_result_id IS NULL
+                    """
+                ).fetchone()[0]
+            ),
+            "aggregate_metrics_missing_metric_id": int(
+                self.conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM evaluation_metrics
+                    WHERE metric_id IS NULL
+                    """
+                ).fetchone()[0]
+            ),
+            "aggregate_metrics_missing_metric_kind": int(
+                self.conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM evaluation_metrics
+                    WHERE metric_kind IS NULL
+                    """
+                ).fetchone()[0]
+            ),
+            "instance_rows_missing_evaluation_result_id": int(
+                self.conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM instance_evaluations
+                    WHERE evaluation_result_id IS NULL
+                    """
+                ).fetchone()[0]
+            ),
+            "instance_rows_repaired_evaluation_id": int(
+                self.conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM instance_evaluations
+                    WHERE evaluation_id_validation_status = 'repaired_from_detailed_results'
+                    """
+                ).fetchone()[0]
+            ),
+            "instance_rows_filled_evaluation_id_from_file_link": int(
+                self.conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM instance_evaluations
+                    WHERE evaluation_id_validation_status = 'filled_from_detailed_results'
+                    """
+                ).fetchone()[0]
+            ),
+            "instance_rows_without_trusted_file_link_validation": int(
+                self.conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM instance_evaluations
+                    WHERE evaluation_id_validation_status IN (
+                        'payload_only_unvalidated',
+                        'payload_only_ambiguous_file_link',
+                        'legacy_unvalidated'
+                    )
+                    """
+                ).fetchone()[0]
+            ),
+        }
+
+        repaired_rows = self.conn.execute(
+            """
+            SELECT
+                ingest_source_path,
+                sample_id,
+                evaluation_name,
+                model_id,
+                original_evaluation_id,
+                evaluation_id,
+                evaluation_id_validation_status
+            FROM instance_evaluations
+            WHERE evaluation_id_validation_status IN (
+                'repaired_from_detailed_results',
+                'filled_from_detailed_results'
+            )
+            ORDER BY ingest_source_path, sample_id
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchall()
+        unvalidated_rows = self.conn.execute(
+            """
+            SELECT
+                ingest_source_path,
+                sample_id,
+                evaluation_name,
+                model_id,
+                original_evaluation_id,
+                evaluation_id,
+                evaluation_id_validation_status
+            FROM instance_evaluations
+            WHERE evaluation_id_validation_status IN (
+                'payload_only_unvalidated',
+                'payload_only_ambiguous_file_link',
+                'legacy_unvalidated'
+            )
+            ORDER BY
+                CASE evaluation_id_validation_status
+                    WHEN 'payload_only_ambiguous_file_link' THEN 0
+                    WHEN 'payload_only_unvalidated' THEN 1
+                    ELSE 2
+                END,
+                ingest_source_path,
+                sample_id
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchall()
+        aggregate_metric_rows = self.conn.execute(
+            """
+            SELECT
+                evaluation_id,
+                metric_index,
+                evaluation_name,
+                metric_id,
+                metric_name,
+                metric_kind
+            FROM evaluation_metrics
+            WHERE evaluation_result_id IS NULL
+               OR metric_id IS NULL
+               OR metric_kind IS NULL
+            ORDER BY evaluation_id, metric_index
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchall()
+
+        return {
+            "summary": summary,
+            "repaired_instance_examples": [
+                {
+                    "ingest_source_path": row[0],
+                    "sample_id": row[1],
+                    "evaluation_name": row[2],
+                    "model_id": row[3],
+                    "original_evaluation_id": row[4],
+                    "stored_evaluation_id": row[5],
+                    "evaluation_id_validation_status": row[6],
+                }
+                for row in repaired_rows
+            ],
+            "unvalidated_instance_examples": [
+                {
+                    "ingest_source_path": row[0],
+                    "sample_id": row[1],
+                    "evaluation_name": row[2],
+                    "model_id": row[3],
+                    "original_evaluation_id": row[4],
+                    "stored_evaluation_id": row[5],
+                    "evaluation_id_validation_status": row[6],
+                }
+                for row in unvalidated_rows
+            ],
+            "aggregate_metric_examples": [
+                {
+                    "evaluation_id": row[0],
+                    "metric_index": int(row[1]),
+                    "evaluation_name": row[2],
+                    "metric_id": row[3],
+                    "metric_name": row[4],
+                    "metric_kind": row[5],
+                }
+                for row in aggregate_metric_rows
+            ],
         }
