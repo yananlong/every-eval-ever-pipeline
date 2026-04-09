@@ -17,7 +17,7 @@ uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 - `POST /ingest/instance?jsonl_path=...`
   - Defaults to `data/simulated/public_leaderboards/instance_rows_200.jsonl`
 - `GET /stats`
-- `GET /metrics/top-models?metric_kind=...&metric_name=...&limit=...`
+- `GET /metrics/top-models?metric_kind=...&metric_name=...&source_name=...&limit=...`
 - `GET /join-integrity`
 
 ## Simulation Tooling

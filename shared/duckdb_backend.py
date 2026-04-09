@@ -24,6 +24,10 @@ def _normalize_name(value: str) -> str:
     return cleaned
 
 
+def _name_join_id(evaluation_name: str) -> str:
+    return f"name:{_normalize_name(evaluation_name)}"
+
+
 class DuckDBBackend:
     """Simple backend storage optimized for ingestion/idempotency and SQL analytics."""
 
@@ -66,6 +70,7 @@ class DuckDBBackend:
                 metric_index INTEGER NOT NULL,
                 evaluation_result_id TEXT,
                 result_join_id TEXT NOT NULL,
+                name_join_id TEXT,
                 join_key_source TEXT NOT NULL,
                 evaluation_name TEXT NOT NULL,
                 metric_id TEXT,
@@ -96,6 +101,12 @@ class DuckDBBackend:
         )
         self.conn.execute(
             """
+            CREATE INDEX IF NOT EXISTS idx_metrics_name_join
+            ON evaluation_metrics (evaluation_id, name_join_id)
+            """
+        )
+        self.conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_metrics_kind
             ON evaluation_metrics (metric_kind)
             """
@@ -109,6 +120,7 @@ class DuckDBBackend:
                 evaluation_name TEXT NOT NULL,
                 evaluation_result_id TEXT,
                 result_join_id TEXT NOT NULL,
+                name_join_id TEXT,
                 join_key_source TEXT NOT NULL,
                 model_id TEXT NOT NULL,
                 score DOUBLE,
@@ -124,6 +136,60 @@ class DuckDBBackend:
             ON instance_evaluations (evaluation_id, result_join_id)
             """
         )
+        self.conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_instance_name_join
+            ON instance_evaluations (evaluation_id, name_join_id)
+            """
+        )
+
+        # Backward-compatible migration path for databases created before name_join_id existed.
+        self.conn.execute(
+            """
+            ALTER TABLE evaluation_metrics
+            ADD COLUMN IF NOT EXISTS name_join_id TEXT
+            """
+        )
+        self.conn.execute(
+            """
+            ALTER TABLE instance_evaluations
+            ADD COLUMN IF NOT EXISTS name_join_id TEXT
+            """
+        )
+
+        metrics_missing_name_join = self.conn.execute(
+            """
+            SELECT evaluation_id, metric_index, evaluation_name
+            FROM evaluation_metrics
+            WHERE name_join_id IS NULL
+            """
+        ).fetchall()
+        for evaluation_id, metric_index, evaluation_name in metrics_missing_name_join:
+            self.conn.execute(
+                """
+                UPDATE evaluation_metrics
+                SET name_join_id = ?
+                WHERE evaluation_id = ? AND metric_index = ?
+                """,
+                [_name_join_id(evaluation_name), evaluation_id, metric_index],
+            )
+
+        instances_missing_name_join = self.conn.execute(
+            """
+            SELECT evaluation_id, sample_id, result_join_id, evaluation_name
+            FROM instance_evaluations
+            WHERE name_join_id IS NULL
+            """
+        ).fetchall()
+        for evaluation_id, sample_id, result_join_id, evaluation_name in instances_missing_name_join:
+            self.conn.execute(
+                """
+                UPDATE instance_evaluations
+                SET name_join_id = ?
+                WHERE evaluation_id = ? AND sample_id = ? AND result_join_id = ?
+                """,
+                [_name_join_id(evaluation_name), evaluation_id, sample_id, result_join_id],
+            )
 
     def _source_reference(self, source_data: dict[str, Any]) -> str | None:
         source_type = source_data.get("source_type")
@@ -141,10 +207,15 @@ class DuckDBBackend:
         dataset_name = source_data.get("dataset_name")
         return str(dataset_name) if dataset_name is not None else None
 
-    def _result_join_id(self, evaluation_result_id: str | None, evaluation_name: str) -> tuple[str, str]:
+    def _join_ids(
+        self,
+        evaluation_result_id: str | None,
+        evaluation_name: str,
+    ) -> tuple[str, str, str]:
+        name_join_id = _name_join_id(evaluation_name)
         if evaluation_result_id:
-            return evaluation_result_id, "evaluation_result_id"
-        return f"name:{_normalize_name(evaluation_name)}", "evaluation_name_fallback"
+            return evaluation_result_id, name_join_id, "evaluation_result_id"
+        return name_join_id, name_join_id, "evaluation_name_fallback"
 
     def ingest_aggregate_jsonl(self, jsonl_path: str | Path) -> dict[str, int]:
         path = Path(jsonl_path)
@@ -271,7 +342,7 @@ class DuckDBBackend:
                         if evaluation_result_id is not None:
                             evaluation_result_id = str(evaluation_result_id)
 
-                        result_join_id, join_key_source = self._result_join_id(
+                        result_join_id, name_join_id, join_key_source = self._join_ids(
                             evaluation_result_id,
                             evaluation_name,
                         )
@@ -296,6 +367,7 @@ class DuckDBBackend:
                                 metric_index,
                                 evaluation_result_id,
                                 result_join_id,
+                                name_join_id,
                                 join_key_source,
                                 evaluation_name,
                                 metric_id,
@@ -313,13 +385,14 @@ class DuckDBBackend:
                                 source_ref,
                                 metric_config_json,
                                 score_details_json
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             [
                                 evaluation_id,
                                 metric_index,
                                 evaluation_result_id,
                                 result_join_id,
+                                name_join_id,
                                 join_key_source,
                                 evaluation_name,
                                 metric_cfg.get("metric_id"),
@@ -373,7 +446,7 @@ class DuckDBBackend:
                 if evaluation_result_id is not None:
                     evaluation_result_id = str(evaluation_result_id)
 
-                result_join_id, join_key_source = self._result_join_id(
+                result_join_id, name_join_id, join_key_source = self._join_ids(
                     evaluation_result_id,
                     evaluation_name,
                 )
@@ -390,9 +463,9 @@ class DuckDBBackend:
                 self.conn.execute(
                     """
                     DELETE FROM instance_evaluations
-                    WHERE evaluation_id = ? AND sample_id = ? AND result_join_id = ?
+                    WHERE evaluation_id = ? AND sample_id = ? AND result_join_id = ? AND name_join_id = ?
                     """,
-                    [evaluation_id, sample_id, result_join_id],
+                    [evaluation_id, sample_id, result_join_id, name_join_id],
                 )
 
                 self.conn.execute(
@@ -403,12 +476,13 @@ class DuckDBBackend:
                         evaluation_name,
                         evaluation_result_id,
                         result_join_id,
+                        name_join_id,
                         join_key_source,
                         model_id,
                         score,
                         is_correct,
                         raw_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         evaluation_id,
@@ -416,6 +490,7 @@ class DuckDBBackend:
                         evaluation_name,
                         evaluation_result_id,
                         result_join_id,
+                        name_join_id,
                         join_key_source,
                         model_id,
                         score,
@@ -455,6 +530,7 @@ class DuckDBBackend:
         self,
         metric_kind: str | None = None,
         metric_name: str | None = None,
+        source_name: str | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -462,6 +538,7 @@ class DuckDBBackend:
             WITH agg AS (
                 SELECT
                     r.model_id,
+                    r.source_name,
                     COALESCE(m.metric_name, m.evaluation_name) AS metric_name,
                     COALESCE(m.metric_kind, 'unknown') AS metric_kind,
                     AVG(m.score) AS avg_score,
@@ -471,24 +548,26 @@ class DuckDBBackend:
                 JOIN evaluation_runs r ON r.evaluation_id = m.evaluation_id
                 WHERE (? IS NULL OR m.metric_kind = ?)
                   AND (? IS NULL OR COALESCE(m.metric_name, m.evaluation_name) = ?)
-                GROUP BY 1, 2, 3
+                  AND (? IS NULL OR r.source_name = ?)
+                GROUP BY 1, 2, 3, 4
             )
             SELECT *
             FROM agg
             ORDER BY CASE WHEN lower_is_better THEN avg_score ELSE -avg_score END ASC NULLS LAST
             LIMIT ?
             """,
-            [metric_kind, metric_kind, metric_name, metric_name, limit],
+            [metric_kind, metric_kind, metric_name, metric_name, source_name, source_name, limit],
         ).fetchall()
 
         return [
             {
                 "model_id": row[0],
-                "metric_name": row[1],
-                "metric_kind": row[2],
-                "avg_score": float(row[3]),
-                "observations": int(row[4]),
-                "lower_is_better": bool(row[5]),
+                "source_name": row[1],
+                "metric_name": row[2],
+                "metric_kind": row[3],
+                "avg_score": float(row[4]),
+                "observations": int(row[5]),
+                "lower_is_better": bool(row[6]),
             }
             for row in rows
         ]
@@ -511,14 +590,37 @@ class DuckDBBackend:
             ).fetchone()[0]
         )
 
-        matched_instances = int(
+        matched_instances_exact = int(
             self.conn.execute(
                 """
                 SELECT COUNT(*)
-                FROM instance_evaluations i
-                JOIN evaluation_metrics m
-                  ON i.evaluation_id = m.evaluation_id
-                 AND i.result_join_id = m.result_join_id
+                FROM (
+                    SELECT DISTINCT i.evaluation_id, i.sample_id, i.result_join_id
+                    FROM instance_evaluations i
+                    JOIN evaluation_metrics m
+                      ON i.evaluation_id = m.evaluation_id
+                     AND i.evaluation_result_id IS NOT NULL
+                     AND m.evaluation_result_id = i.evaluation_result_id
+                )
+                """
+            ).fetchone()[0]
+        )
+
+        matched_instances_name_fallback = int(
+            self.conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM (
+                    SELECT DISTINCT i.evaluation_id, i.sample_id, i.result_join_id
+                    FROM instance_evaluations i
+                    JOIN evaluation_metrics m
+                      ON i.evaluation_id = m.evaluation_id
+                     AND i.name_join_id = m.name_join_id
+                     AND NOT (
+                        i.evaluation_result_id IS NOT NULL
+                        AND m.evaluation_result_id IS NOT NULL
+                     )
+                )
                 """
             ).fetchone()[0]
         )
@@ -528,5 +630,9 @@ class DuckDBBackend:
             "aggregate_metrics_with_evaluation_result_id": metrics_with_result_id,
             "instance_rows_total": instance_total,
             "instance_rows_with_evaluation_result_id": instance_with_result_id,
-            "instance_rows_joined_to_aggregate": matched_instances,
+            "instance_rows_joined_by_evaluation_result_id": matched_instances_exact,
+            "instance_rows_joined_by_name_fallback": matched_instances_name_fallback,
+            "instance_rows_joined_to_aggregate": (
+                matched_instances_exact + matched_instances_name_fallback
+            ),
         }

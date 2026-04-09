@@ -95,10 +95,16 @@ async def get_stats() -> dict:
 async def top_model_metrics(
     metric_kind: str | None = Query(default=None, description="Filter by metric_kind"),
     metric_name: str | None = Query(default=None, description="Filter by metric_name"),
+    source_name: str | None = Query(default=None, description="Filter by source_name"),
     limit: int = Query(default=20, ge=1, le=500),
 ) -> dict:
     """Return top model averages for a given metric slice."""
-    rows = backend.top_model_metrics(metric_kind=metric_kind, metric_name=metric_name, limit=limit)
+    rows = backend.top_model_metrics(
+        metric_kind=metric_kind,
+        metric_name=metric_name,
+        source_name=source_name,
+        limit=limit,
+    )
     return {"ok": True, "rows": rows}
 
 
